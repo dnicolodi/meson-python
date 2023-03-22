@@ -776,6 +776,9 @@ class Project():
         assert self._ninja is not None  # help mypy
         self._run([self._ninja, *self._meson_args['compile']])
 
+    def install(self, destdir: pathlib.Path) -> None:
+        self._run(['meson', 'install', '--no-rebuild', '--destdir', os.fspath(destdir)])
+
     @functools.lru_cache()
     def _info(self, name: str) -> Dict[str, Any]:
         """Read info from meson-info directory."""
