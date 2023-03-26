@@ -479,34 +479,29 @@ class _WheelBuilder():
             )
 
     def build(self, directory: Path) -> pathlib.Path:
-        self._project.build()  # ensure project is built
+        # ensure project is built
+        self._project.build()
 
-        wheel_file = pathlib.Path(directory, f'{self.name}.whl')
+        with tempfile.TemporaryDirectory(prefix=f'mesonpy-{self.project.name}-') as destdir:
+            # install project in temporary destination directory
+            installed = self._project.install(destdir)
 
-        with mesonpy._wheelfile.WheelFile(wheel_file, 'w') as whl:
-            self._wheel_write_metadata(whl)
+            wheel_file = pathlib.Path(directory, f'{self.name}.whl')
+            with mesonpy._wheelfile.WheelFile(wheel_file, 'w') as whl:
+                self._wheel_write_metadata(whl)
 
-            print('{light_blue}{bold}Copying files to wheel...{reset}'.format(**_STYLES))
-            with mesonpy._util.cli_counter(
-                len(list(itertools.chain.from_iterable(self._wheel_files.values()))),
-            ) as counter:
-                # install root scheme files
-                root_scheme = 'purelib' if self.is_pure else 'platlib'
-                for destination, origin in self._wheel_files[root_scheme]:
-                    self._install_path(whl, counter, origin, destination)
-
-                # install bundled libraries
-                for destination, origin in self._wheel_files['mesonpy-libs']:
-                    destination = pathlib.Path(f'.{self._project.name}.mesonpy.libs', destination)
-                    self._install_path(whl, counter, origin, destination)
-
-                # install the other schemes
-                for scheme in self._wheel_files.keys():
-                    if scheme in (root_scheme, 'mesonpy-libs'):
-                        continue
-                    for destination, origin in self._wheel_files[scheme]:
-                        destination = pathlib.Path(self.data_dir, scheme, destination)
-                        self._install_path(whl, counter, origin, destination)
+                print('{light_blue}{bold}Copying files to wheel...{reset}'.format(**_STYLES))
+                with mesonpy._util.cli_counter(sum(len(x) for x in self._wheel_files.values())) as counter:
+                    root = 'purelib' if self.is_pure else 'platlib'
+                    for path, entries in self._wheel_files.items():
+                        for dst, src in entries:
+                            if path == root:
+                                pass
+                            elif path == 'mesonpy-libs':
+                                dst = pathlib.Path(f'.{self._project.name}.mesonpy.libs', dst)
+                            else:
+                                dst = pathlib.Path(self.data_dir, path, dst)
+                            self._install_path(whl, counter, src, dst)
 
         return wheel_file
 
@@ -777,7 +772,14 @@ class Project():
         self._run([self._ninja, *self._meson_args['compile']])
 
     def install(self, destdir: pathlib.Path) -> None:
-        self._run(['meson', 'install', '--no-rebuild', '--destdir', os.fspath(destdir)])
+        """Install Meson project."""
+        self._run(['meson', 'install', '--no-rebuild', '--quite', *self._meson_args['install'], '--destdir', os.fspath(destdir)])
+        # return a dictinary mapping installed files to thei install location
+        installed = {}
+        for src, dst in self._info('intro-installed').items():
+            path = pathlib.Path(dst).absolute()
+            installed[src] = os.fspath(destdir / path.relative_to(path.anchor))
+        return installed
 
     @functools.lru_cache()
     def _info(self, name: str) -> Dict[str, Any]:
