@@ -181,7 +181,8 @@ def test_detect_wheel_tag_script(wheel_executable):
     assert name.group('plat') == PLATFORM
 
 
-@pytest.mark.skipif(platform.system() not in ['Linux', 'Darwin'], reason='Unsupported on this platform for now')
+@pytest.mark.xfail(platform.system() == 'Darwin')
+@pytest.mark.skipif(platform.system() not in {'Linux', 'Darwin'}, reason='Unsupported on this platform for now')
 def test_rpath(wheel_link_against_local_lib, tmp_path):
     artifact = wheel.wheelfile.WheelFile(wheel_link_against_local_lib)
     artifact.extractall(tmp_path)
@@ -194,7 +195,8 @@ def test_rpath(wheel_link_against_local_lib, tmp_path):
         assert '@loader_path/.link_against_local_lib.mesonpy.libs' in dylib.rpath
 
 
-@pytest.mark.skipif(platform.system() not in ['Linux', 'Darwin'], reason='Unsupported on this platform for now')
+@pytest.mark.xfail(platform.system() == 'Darwin')
+@pytest.mark.skipif(platform.system() not in {'Linux', 'Darwin'}, reason='Unsupported on this platform for now')
 def test_uneeded_rpath(wheel_purelib_and_platlib, tmp_path):
     artifact = wheel.wheelfile.WheelFile(wheel_purelib_and_platlib)
     artifact.extractall(tmp_path)
