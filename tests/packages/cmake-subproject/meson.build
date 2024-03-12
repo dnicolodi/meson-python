@@ -4,7 +4,11 @@
 
 project('cmake-subproject', ['c', 'cpp', 'cython'], version: '1')
 
-dep = dependency('cmaketest')
+if meson.version().version_compare('>= 1.3.0')
+    dep = dependency('cmaketest')
+else
+    dep = import('cmake').subproject('cmaketest').dependency('cmaketest')
+endif
 
 py = import('python').find_installation()
 
