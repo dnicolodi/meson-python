@@ -115,7 +115,12 @@ _INSTALLATION_PATH_MAP = {
 class Entry(typing.NamedTuple):
     dst: pathlib.Path
     src: str
-    rpath: Optional[str] = None
+    # Meson support only one install_rpath entry per target. Use a list so it is
+    # easier to append to it when needed.
+    install_rpath: List[str] = []
+    # Set to None when consuming introspection data from Meson version prior to
+    # 1.9.0, see https://github.com/mesonbuild/meson/pull/14819.
+    build_rpath: Optional[List[str]] = []
 
 
 def _map_to_wheel(sources: Dict[str, Dict[str, Any]]) -> DefaultDict[str, List[Entry]]:
@@ -164,7 +169,9 @@ def _map_to_wheel(sources: Dict[str, Dict[str, Any]]) -> DefaultDict[str, List[E
                         filedst = dst / relpath
                         wheel_files[path].append(Entry(filedst, filesrc))
             else:
-                wheel_files[path].append(Entry(dst, src, target.get('install_rpath')))
+                tmp = target.get('install_rpath')
+                install_rpath = [tmp] if tmp else []
+                wheel_files[path].append(Entry(dst, src, install_rpath, target.get('build_rpaths')))
 
     return wheel_files
 
@@ -311,6 +318,14 @@ def _is_native(file: Path) -> bool:
             return f.read(4) == b'\x7fELF'  # ELF
 
 
+def _has_build_rpath(path: str) -> bool:
+    for path in mesonpy._rpath._get_rpath(path):
+        root, sep, stem = path.partition('/')
+        if root in {'@ORIGIN' or '@loader_path'}:
+            return True
+    return False
+
+
 @dataclasses.dataclass
 class _WheelBuilder():
     """Helper class to build wheels from projects."""
@@ -424,24 +439,29 @@ class _WheelBuilder():
         return None
 
     def _install_path(self, wheel_file: mesonpy._wheelfile.WheelFile,
-                      origin: Path, destination: pathlib.Path, rpath: Optional[str]) -> None:
+                      origin: str, destination: pathlib.Path,
+                      build_rpath: Optional[List[str]], install_rpath: List[str]) -> None:
         """Add a file to the wheel."""
+        
+        if ((build_rpath is None and _has_build_rpath(origin)) or build_rpath) and self._has_internal_libs:
+            # When an executable, library, or Python extension module is
+            # dynamically linked to a library built as part of the project,
+            # Meson adds a library load path to it pointing to the build
+            # directory. meson-python relocates the shared libraries to the
+            # ``.<project-name>.mesonpy.libs`` folder. Add an install_rpath
+            # entry pointing to this folderx instead.
+            #
+            # build_rpath is recorded in the introspetion metadata only starting
+            # with Meson 1.9.0. For compatibility with older Meson versions, use
+            # the presence of a relative RPATH entry and an indicator that Meson
+            # added a build RPATH. This heuristic may trigger on manually added
+            # RPATH entries, but this only results in an unnecessary RPATH
+            # entries being added.
+            libs_path = os.path.join('$ORIGIN', os.path.relpath(self._libs_dir, destination.parent))
+            install_rpath.append(libs_path)
 
-        if _is_native(origin):
-            libspath = None
-            if self._has_internal_libs:
-                # When an executable, library, or Python extension module is
-                # dynamically linked to a library built as part of the project,
-                # Meson adds a library load path to it pointing to the build
-                # directory, in the form of a relative RPATH entry. meson-python
-                # relocates the shared libraries to the ``.<project-name>.mesonpy.libs``
-                # folder. Rewrite the RPATH to point to that folder instead.
-                libspath = os.path.relpath(self._libs_dir, destination.parent)
-
-            # Adjust RPATH: remove build RPATH added by meson, add an RPATH
-            # entries as per above, and add any ``install_rpath`` specified in
-            # meson.build
-            mesonpy._rpath.fix_rpath(origin, rpath, libspath)
+        if build_rpath or install_rpath:
+            mesonpy._rpath.fix_rpath(origin, build_rpath or [], install_rpath)
 
         try:
             wheel_file.write(origin, destination.as_posix())
@@ -486,7 +506,7 @@ class _WheelBuilder():
                 root = 'purelib' if self._pure else 'platlib'
 
                 for path, entries in self._manifest.items():
-                    for dst, src, rpath in entries:
+                    for dst, src, install_rpath, build_rpath in entries:
                         counter.update(src)
 
                         if path == root:
@@ -497,7 +517,7 @@ class _WheelBuilder():
                         else:
                             dst = pathlib.Path(self._data_dir, path, dst)
 
-                        self._install_path(whl, src, dst, rpath)
+                        self._install_path(whl, src, dst, build_rpath, install_rpath)
 
         return wheel_file
 
