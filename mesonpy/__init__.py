@@ -297,7 +297,7 @@ class Metadata(pyproject_metadata.StandardMetadata):
         metadata = super().from_pyproject(data, project_dir, metadata_version)
 
         # Check for unsupported dynamic fields.
-        unsupported_dynamic = set(metadata.dynamic) - _SUPPORTED_DYNAMIC_FIELDS  # type: ignore[operator]
+        unsupported_dynamic = set(metadata.dynamic) - _SUPPORTED_DYNAMIC_FIELDS
         if unsupported_dynamic:
             fields = ', '.join(f'"{x}"' for x in unsupported_dynamic)
             raise pyproject_metadata.ConfigurationError(f'Unsupported dynamic fields: {fields}')
